@@ -2,7 +2,6 @@ package bird
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"log"
 	"reflect"
@@ -313,11 +312,28 @@ func Symbols(useCache bool) (Parsed, bool) {
 func routesQuery(filter string) string {
 	cmd := "route " + filter
 
-	if getBirdVersion() < 2 || ClientConf.Dualstack {
+	ipVersionFilter := routesIPVersionFilter()
+	if ipVersionFilter == "" {
 		return cmd
 	}
 
-	return cmd + " where net.type = NET_IP" + IPVersion
+	if strings.Contains(" "+filter+" ", " where ") {
+		return cmd + " && " + ipVersionFilter
+	}
+
+	return cmd + " where " + ipVersionFilter
+}
+
+func routesWhereQuery(filter, condition string) string {
+	return routesQuery(filter + " where (" + condition + ")")
+}
+
+func routesIPVersionFilter() string {
+	if getBirdVersion() < 2 || ClientConf.Dualstack {
+		return ""
+	}
+
+	return "net.type = NET_IP" + IPVersion
 }
 
 func remapTable(table string) string {
@@ -358,7 +374,7 @@ func RoutesProto(useCache bool, protocol string) (Parsed, bool) {
 }
 
 func RoutesPeer(useCache bool, peer string) (Parsed, bool) {
-	cmd := "route all where from=" + peer
+	cmd := routesWhereQuery("all", "from="+peer)
 	return RunAndParse(
 		useCache,
 		GetCacheKey("RoutesPeer", peer),
@@ -369,7 +385,7 @@ func RoutesPeer(useCache bool, peer string) (Parsed, bool) {
 
 func RoutesTableAndPeer(useCache bool, table string, peer string) (Parsed, bool) {
 	table = remapTable(table)
-	cmd := "route table '" + table + "' all where from=" + peer
+	cmd := routesWhereQuery("table '"+table+"' all", "from="+peer)
 	return RunAndParse(
 		useCache,
 		GetCacheKey("RoutesTableAndPeer", table, peer),
@@ -400,9 +416,7 @@ func RoutesProtoPrimaryCount(useCache bool, protocol string) (Parsed, bool) {
 
 func PipeRoutesFilteredCount(useCache bool, pipe string, table string, neighborAddress string) (Parsed, bool) {
 	table = remapTable(table)
-	cmd := "route table '" + table +
-		"' noexport '" + pipe +
-		"' where from='" + neighborAddress + "' count"
+	cmd := routesWhereQuery("table '"+table+"' noexport '"+pipe+"' count", "from='"+neighborAddress+"'")
 	return RunAndParse(
 		useCache,
 		GetCacheKey("PipeRoutesFilteredCount", table, pipe, neighborAddress),
@@ -413,7 +427,7 @@ func PipeRoutesFilteredCount(useCache bool, pipe string, table string, neighborA
 
 func PipeRoutesFiltered(useCache bool, pipe string, table string) (Parsed, bool) {
 	table = remapTable(table)
-	cmd := "route table '" + table + "' noexport '" + pipe + "' all"
+	cmd := routesQuery("table '" + table + "' noexport '" + pipe + "' all")
 	return RunAndParse(
 		useCache,
 		GetCacheKey("PipeRoutesFiltered", table, pipe),
@@ -435,8 +449,7 @@ func PipeRoutesFilteredProtocol(
 	protocol string,
 ) (Parsed, bool) {
 	table = remapTable(table)
-	cmd := "route table '" + table + "' noexport '" + pipe + "' protocol '" + protocol + "' all"
-	fmt.Println("CMD:", cmd)
+	cmd := routesQuery("table '" + table + "' noexport '" + pipe + "' protocol '" + protocol + "' all")
 	return RunAndParse(
 		useCache,
 		GetCacheKey("PipeRoutesFiltered", table, pipe),
@@ -566,11 +579,29 @@ func getBirdVersion() int {
 		return 0
 	}
 
-	v, err := strconv.Atoi(string(version[0]))
-	if err != nil {
+	v := parseBirdMajorVersion(version)
+	if v == 0 {
 		return 0
 	}
 
 	BirdVersion = v
+	return v
+}
+
+func parseBirdMajorVersion(version string) int {
+	version = strings.TrimLeft(version, "vV")
+	end := 0
+	for end < len(version) && version[end] >= '0' && version[end] <= '9' {
+		end++
+	}
+	if end == 0 {
+		return 0
+	}
+
+	v, err := strconv.Atoi(version[:end])
+	if err != nil {
+		return 0
+	}
+
 	return v
 }

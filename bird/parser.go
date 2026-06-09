@@ -48,6 +48,7 @@ var (
 			origin            *regexp.Regexp
 			prefix            *regexp.Regexp
 			gateway           *regexp.Regexp
+			recursive         *regexp.Regexp
 			iface             *regexp.Regexp
 		}
 	}
@@ -76,7 +77,7 @@ func init() {
 	regex.protocol.numericValue = regexp.MustCompile(`^\s+([^:]+):\s+([\d]+)\s*$`)
 	regex.protocol.routes = regexp.MustCompile(`^\s+Routes:\s+(.*)`)
 	regex.protocol.stringValue = regexp.MustCompile(`^\s+([^:]+):\s+(.+)\s*$`)
-	regex.protocol.routeChanges = regexp.MustCompile(`(Import|Export) (updates|withdraws):\s+(\d+|---)\s+(\d+|---)\s+(\d+|---)\s+(\d+|---)\s+(\d+|---)\s*$`)
+	regex.protocol.routeChanges = regexp.MustCompile(`^\s+(Import|Export) (updates|withdraws):\s+(.+)\s*$`)
 
 	regex.routes.startDefinition = regexp.MustCompile(`^(` + re_prefix + `)\s+via\s+(` + re_ip + `)\s+on\s+(` + re_ifname + `)\s+\[([\w\.:]+)\s+([0-9\-\:\s]+)(?:\s+from\s+(` + re_prefix + `)){0,1}\]\s+(?:(\*)\s+){0,1}\((\d+)(?:\/\d+){0,1}|\?\).*`)
 	regex.protocol.short = regexp.MustCompile(`^(?:1002\-)?(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+([0-9\-]+\s+[0-9\:\.]+?|[0-9\-]+|[0-9\:\.]+)(?:\s*|\s+(.*)\s*?)$`)
@@ -87,9 +88,10 @@ func init() {
 	regex.routes.largeCommunity = regexp.MustCompile(`^\((\d+),\s*(\d+),\s*(\d+)\)`)
 	regex.routes.extendedCommunity = regexp.MustCompile(`^\(([^,]+),\s*([^,]+),\s*([^,]+)\)`)
 	regex.routes.origin = regexp.MustCompile(`\([^\(]*\)\s*`)
-	regex.routes.prefix = regexp.MustCompile(`^(` + re_prefix + `)?\s+(?:unicast|blackhole)\s+\[([\w\.:]+)\s+([0-9\-\:\.\s]+)(?:\s+from\s+(` + re_prefix + `))?\]\s+(?:(\*)\s+)?\((\d+)(?:\/\d+)?(?:\/[^\)]*)?\).*$`)
-	regex.routes.gateway = regexp.MustCompile(`^\s+via\s+(` + re_ip + `)\s+on\s+(` + re_ifname + `)\s*$`)
-	regex.routes.iface = regexp.MustCompile(`^\s+dev\s+(` + re_ifname + `)\s*$`)
+	regex.routes.prefix = regexp.MustCompile(`^(` + re_prefix + `)?\s+(?:unicast|blackhole|unreachable|prohibited|recursive)\s+\[([\w\.:]+)\s+([0-9\-\:\.\s]+)(?:\s+from\s+(` + re_prefix + `))?\]\s+(?:(\*)\s+)?\((\d+)(?:\/\d+)?(?:\/[^\)]*)?\).*$`)
+	regex.routes.gateway = regexp.MustCompile(`^\s+via\s+(` + re_ip + `)\s+on\s+(` + re_ifname + `)(?:\s+.*)?$`)
+	regex.routes.recursive = regexp.MustCompile(`^\s+via\s+(` + re_ip + `)(?:\s+` + re_ip + `)?\s+table\s+([^\s]+)(?:\s+.*)?$`)
+	regex.routes.iface = regexp.MustCompile(`^\s+dev\s+(` + re_ifname + `)(?:\s+.*)?$`)
 }
 
 func dirtyContains(l []string, e string) bool {
@@ -174,22 +176,34 @@ func parseProtocols(reader io.Reader) Parsed {
 	res := Parsed{}
 
 	proto := ""
+	addProtocol := func() {
+		if emptyString(proto) {
+			return
+		}
+
+		parsed := parseProtocol(proto)
+		if protocol, ok := parsed["protocol"].(string); ok {
+			res[protocol] = parsed
+		}
+	}
 
 	lines := newLineIterator(reader, false)
 	for lines.next() {
 		line := lines.string()
 
-		if emptyString(line) {
-			if !emptyString(proto) {
-				parsed := parseProtocol(proto)
+		if specialLine(line) {
+			continue
+		}
 
-				res[parsed["protocol"].(string)] = parsed
-			}
+		if emptyString(line) {
+			addProtocol()
 			proto = ""
 		} else {
 			proto += (line + "\n")
 		}
 	}
+
+	addProtocol()
 
 	return Parsed{"protocols": res}
 }
@@ -344,12 +358,16 @@ func parseRouteLines(lines []string, position int, ch chan<- blockParsed) {
 			}
 
 			parseMainRouteDetail(regex.routes.startDefinition.FindStringSubmatch(line), route)
-		} else if regex.routes.gateway.MatchString(line) {
-			parseRoutesGatewayBird2(regex.routes.gateway.FindStringSubmatch(line), route)
 		} else if regex.routes.second.MatchString(line) {
 			routes = append(routes, route)
 
 			route = parseRoutesSecond(line, route)
+		} else if regex.routes.gateway.MatchString(line) {
+			parseRoutesGatewayBird2(regex.routes.gateway.FindStringSubmatch(line), route)
+		} else if regex.routes.recursive.MatchString(line) {
+			parseRoutesRecursiveBird2(regex.routes.recursive.FindStringSubmatch(line), route)
+		} else if regex.routes.iface.MatchString(line) {
+			parseRoutesIfaceBird2(regex.routes.iface.FindStringSubmatch(line), route)
 		} else if regex.routes.routeType.MatchString(line) {
 			submatch := regex.routes.routeType.FindStringSubmatch(line)[1]
 			route["type"] = strings.Split(submatch, " ")
@@ -440,6 +458,15 @@ func parseMainRouteDetailBird2(groups []string, route Parsed, formerPrefix strin
 func parseRoutesGatewayBird2(groups []string, route Parsed) {
 	route["gateway"] = groups[1]
 	route["interface"] = groups[2]
+}
+
+func parseRoutesRecursiveBird2(groups []string, route Parsed) {
+	route["gateway"] = groups[1]
+	route["recursive_table"] = groups[2]
+}
+
+func parseRoutesIfaceBird2(groups []string, route Parsed) {
+	route["interface"] = groups[1]
 }
 
 func parseRoutesSecond(line string, route Parsed) Parsed {
@@ -691,12 +718,19 @@ func parseProtocolRouteChanges(line string, state *ProtocolParserState) bool {
 		return false
 	}
 
+	fields := strings.Fields(groups[3])
+	fieldNames, ok := map[int][]string{
+		5: {"received", "rejected", "filtered", "ignored", "accepted"},
+		7: {"received", "rejected", "filtered", "ignored", "rx_limit", "limit", "accepted"},
+	}[len(fields)]
+	if !ok {
+		return false
+	}
+
 	updates := Parsed{}
-	setChangeCount("received", groups[3], updates)
-	setChangeCount("rejected", groups[4], updates)
-	setChangeCount("filtered", groups[5], updates)
-	setChangeCount("ignored", groups[6], updates)
-	setChangeCount("accepted", groups[7], updates)
+	for i, field := range fields {
+		setChangeCount(fieldNames[i], field, updates)
+	}
 
 	key := strings.ToLower(groups[1]) + "_" + groups[2]
 

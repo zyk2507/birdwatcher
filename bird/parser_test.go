@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/kr/pretty"
@@ -64,7 +65,7 @@ func TestParseStatus(t *testing.T) {
 				"last_reboot":    "2025-03-28 05:41:41.348",
 				"last_reconfig":  "2025-03-31 12:34:16.644",
 				"message":        "Daemon is up and running",
-				"router_id": 	  "1.2.3.4",
+				"router_id":      "1.2.3.4",
 				"version":        "3.0.1",
 			},
 		},
@@ -169,6 +170,91 @@ func TestParseProtocolShortBird3(t *testing.T) {
 	}
 
 	fmt.Println(protocols)
+}
+
+func TestParseProtocolRouteChangesBird3(t *testing.T) {
+	input := `R194_42  BGP      ---      up     15:14:04.961  Established
+  Channel ipv4
+    Routes:         10 imported, 2 filtered, 30 exported, 4 preferred
+    Route change stats:     received   rejected   filtered    ignored   RX limit      limit   accepted
+      Import updates:             10          1          2          3          4          5          6
+      Import withdraws:           11          7        ---          8        ---        ---          9
+      Export updates:             20         12         13         14        ---         15         16
+      Export withdraws:           21        ---        ---         22        ---        ---         23`
+
+	p := parseProtocols(strings.NewReader(input))
+	protocols := p["protocols"].(Parsed)
+	protocol := protocols["R194_42"].(Parsed)
+	routeChanges := protocol["route_changes"].(Parsed)
+
+	importUpdates := routeChanges["import_updates"].(Parsed)
+	if value := importUpdates["rx_limit"].(int64); value != 4 {
+		t.Fatalf("Expected import update rx_limit to be 4, got %d", value)
+	}
+	if value := importUpdates["limit"].(int64); value != 5 {
+		t.Fatalf("Expected import update limit to be 5, got %d", value)
+	}
+	if value := importUpdates["accepted"].(int64); value != 6 {
+		t.Fatalf("Expected import update accepted to be 6, got %d", value)
+	}
+
+	importWithdraws := routeChanges["import_withdraws"].(Parsed)
+	if _, ok := importWithdraws["filtered"]; ok {
+		t.Fatal("Expected unavailable filtered import withdraw count to be omitted")
+	}
+	if value := importWithdraws["accepted"].(int64); value != 9 {
+		t.Fatalf("Expected import withdraw accepted to be 9, got %d", value)
+	}
+
+	exportUpdates := routeChanges["export_updates"].(Parsed)
+	if value := exportUpdates["limit"].(int64); value != 15 {
+		t.Fatalf("Expected export update limit to be 15, got %d", value)
+	}
+}
+
+func TestParseRoutesBird3SpecialDestinations(t *testing.T) {
+	input := `BIRD 3.3.0 ready.
+Table master4:
+203.0.113.0/24      unreachable [static1 12:00:00.000] * (200)
+	preference: 200
+	source: Static
+198.51.100.0/24     prohibited [static2 12:00:01.000] * (200)
+	preference: 200
+	source: Static
+192.0.2.0/24        unicast [static3 12:00:02.000] * (200)
+	dev eth0 onlink
+	preference: 200
+	source: Static
+10.0.0.0/24         recursive [static4 12:00:03.000] * (200)
+	via 192.0.2.1 table master4
+	preference: 200
+	source: Static`
+
+	result := parseRoutes(strings.NewReader(input))
+	routes, ok := result["routes"].([]Parsed)
+	if !ok {
+		t.Fatal("Error getting routes")
+	}
+
+	if len(routes) != 4 {
+		t.Fatalf("Expected 4 routes but got %d", len(routes))
+	}
+
+	if network := routes[0]["network"].(string); network != "203.0.113.0/24" {
+		t.Fatalf("Expected first route network to be 203.0.113.0/24, got %s", network)
+	}
+	if metric := routes[0]["metric"].(int64); metric != 200 {
+		t.Fatalf("Expected first route metric to be 200, got %d", metric)
+	}
+	if _, ok := routes[0]["gateway"]; ok {
+		t.Fatal("Expected unreachable route not to have a gateway")
+	}
+	if iface := routes[2]["interface"].(string); iface != "eth0" {
+		t.Fatalf("Expected dev route interface to be eth0, got %s", iface)
+	}
+	if table := routes[3]["recursive_table"].(string); table != "master4" {
+		t.Fatalf("Expected recursive route table to be master4, got %s", table)
+	}
 }
 
 func TestParseRoutesAllIpv4Bird1(t *testing.T) {
