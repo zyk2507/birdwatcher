@@ -145,6 +145,19 @@ to change it, it is well-commented and hopefully intuitive.
 If you do not know how to configure it, please consider opening
 [an issue](https://github.com/alice-lg/birdwatcher/issues/new).
 
+### Prometheus metrics
+
+To expose metrics for Prometheus, enable the `metrics` module in the server
+configuration:
+
+    modules_enabled = ["status", "protocols", "metrics"]
+
+The `/metrics` endpoint uses an in-memory scrape cache so frequent Prometheus
+polling does not execute `birdc` on every request. The default cache TTL is 15
+seconds. You can tune it in the server configuration:
+
+    metrics_cache_ttl = 30
+
 ## How
 
 In the background `birdwatcher` runs the `birdc[6]` client, sends

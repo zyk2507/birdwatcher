@@ -36,6 +36,9 @@ func makeRouter(config endpoints.ServerConfig) *httprouter.Router {
 		r.GET("/version", endpoints.Version(VERSION))
 		r.GET("/status", endpoints.Endpoint(endpoints.Status))
 	}
+	if isModuleEnabled("metrics", whitelist) {
+		r.GET("/metrics", endpoints.Metrics())
+	}
 	if isModuleEnabled("protocols", whitelist) {
 		r.GET("/protocols", endpoints.Endpoint(endpoints.Protocols))
 	}
@@ -179,6 +182,7 @@ func main() {
 	}
 
 	endpoints.VERSION = VERSION
+	endpoints.SetPrometheusMetricsCacheTTL(conf.Server.MetricsCacheTtl)
 	bird.InstallRateLimitReset()
 
 	// Get config according to flags
