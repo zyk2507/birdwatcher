@@ -81,7 +81,7 @@ endif
 	rm -f DIST/etc/birdwatcher/*.local.*
 
 	# Copy bin
-	cp $(PROG)-linux-$(ARCH) DIST/opt/birdwatcher/birdwatcher/bin/.
+	cp $(PROG)-linux-$(ARCH) DIST/opt/birdwatcher/birdwatcher/bin/$(PROG)
 
 
 release: linux
@@ -130,4 +130,3 @@ clean:
 	rm -f $(PROG)-osx-$(ARCH)
 	rm -f $(PROG)-linux-$(ARCH)
 	rm -rf $(DIST)
-

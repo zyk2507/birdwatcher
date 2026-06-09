@@ -1,0 +1,73 @@
+name: Release Packages
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dated-release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build dated release packages
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22.x"
+          cache: true
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm
+          gem install --no-document fpm
+
+      - name: Compute release version
+        id: version
+        env:
+          TZ: Asia/Hong_Kong
+        run: |
+          year="$(date +%y)"
+          month="$(date +%m)"
+          day="$(date +%d)"
+          version="${year}.$((10#${month})).$((10#${day}))"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "tag=v${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build release packages
+        run: scripts/build-release-packages.sh "${{ steps.version.outputs.version }}" dist/packages
+
+      - name: List package artifacts
+        run: ls -lh dist/packages
+
+      - name: Replace same-day GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release delete "${RELEASE_TAG}" --cleanup-tag --yes || true
+          git push origin ":refs/tags/${RELEASE_TAG}" || true
+          gh release create "${RELEASE_TAG}" dist/packages/* \
+            --target "${GITHUB_SHA}" \
+            --title "birdwatcher ${RELEASE_VERSION}" \
+            --notes "Automated package release for ${RELEASE_VERSION}."

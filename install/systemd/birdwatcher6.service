@@ -5,7 +5,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/opt/birdwatcher/birdwatcher/bin/birdwatcher-linux-amd64 -6
+ExecStart=/opt/birdwatcher/birdwatcher/bin/birdwatcher -config /etc/birdwatcher/birdwatcher.conf -6
 
 [Install]
 WantedBy=multi-user.target
