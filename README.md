@@ -152,11 +152,53 @@ configuration:
 
     modules_enabled = ["status", "protocols", "metrics"]
 
-The `/metrics` endpoint uses an in-memory scrape cache so frequent Prometheus
-polling does not execute `birdc` on every request. The default cache TTL is 15
-seconds. You can tune it in the server configuration:
+Prometheus can then scrape birdwatcher on `/metrics`:
+
+    scrape_configs:
+      - job_name: birdwatcher
+        scrape_interval: 30s
+        static_configs:
+          - targets:
+              - 127.0.0.1:29184
+
+The `/metrics` endpoint intentionally uses an in-memory scrape cache so
+frequent Prometheus polling does not execute `birdc` on every request. The
+default cache TTL is 15 seconds. You can tune it in the server configuration:
 
     metrics_cache_ttl = 30
+
+The `uncached=true` query parameter is ignored for `/metrics`; this endpoint
+always uses the protected scrape path. Set `metrics_cache_ttl` to a value lower
+than your Prometheus `scrape_interval` only if BIRD can handle the extra
+`birdc status` and `birdc protocols all` calls.
+
+The exporter currently emits:
+
+    birdwatcher_bird_up
+    birdwatcher_scrape_success
+    birdwatcher_cache_result
+    birdwatcher_bird_info
+    birdwatcher_bird_current_server_timestamp_seconds
+    birdwatcher_bird_last_reboot_timestamp_seconds
+    birdwatcher_bird_last_reconfig_timestamp_seconds
+    birdwatcher_protocol_info
+    birdwatcher_protocol_up
+    birdwatcher_protocol_state
+    birdwatcher_protocol_state_changed_timestamp_seconds
+    birdwatcher_protocol_numeric_value
+    birdwatcher_protocol_routes
+    birdwatcher_protocol_channel_routes
+    birdwatcher_protocol_route_changes_total
+    birdwatcher_bgp_session_up
+    birdwatcher_bgp_neighbor_as
+    birdwatcher_bgp_route_limit
+    birdwatcher_bgp_hold_timer_seconds
+    birdwatcher_bgp_keepalive_timer_seconds
+
+An example Grafana dashboard is provided in
+`docs/grafana/prometheus-dashboard.json`. Import it into Grafana and select
+your Prometheus data source. The release packages do not install this dashboard
+file.
 
 ## How
 
